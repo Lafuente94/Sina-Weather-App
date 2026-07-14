@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Meteo Soria</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0b1220; --card:#131c2e; --fg:#e6edf7; --muted:#8aa0bd; --accent:#4da3ff; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 16px);
+    }
+    header { padding: 20px 0 8px; }
+    h1 { font-size: 22px; margin: 0; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .card { background: var(--card); border-radius: 16px; padding: 16px; margin-top: 16px; }
+    .now { display: flex; align-items: baseline; gap: 8px; }
+    .now .temp { font-size: 44px; font-weight: 700; }
+    .now .unit { font-size: 18px; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 12px; }
+    .metric { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 10px; }
+    .metric .k { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    .metric .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    button {
+      background: rgba(255,255,255,0.06); color: var(--fg); border: none;
+      border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer;
+    }
+    button.active { background: var(--accent); color: #041225; font-weight: 600; }
+    .chart-box { position: relative; height: 240px; margin-top: 8px; }
+    .err { color: #ff8080; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Meteo Soria</h1>
+    <div class="sub" id="updated">Cargando…</div>
+  </header>
+
+  <div class="card">
+    <div class="now">
+      <span class="temp" id="temp">--</span><span class="unit">°C</span>
+    </div>
+    <div class="grid">
+      <div class="metric"><div class="k">Humedad</div><div class="v" id="hr">--</div></div>
+      <div class="metric"><div class="k">Presión</div><div class="v" id="pres">--</div></div>
+      <div class="metric"><div class="k">Viento</div><div class="v" id="vv">--</div></div>
+      <div class="metric"><div class="k">Máx</div><div class="v" id="tamax">--</div></div>
+      <div class="metric"><div class="k">Mín</div><div class="v" id="tamin">--</div></div>
+      <div class="metric"><div class="k">Precip.</div><div class="v" id="prec">--</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="controls" id="fieldBtns">
+      <button data-campo="ta" class="active">Temperatura</button>
+      <button data-campo="hr">Humedad</button>
+      <button data-campo="pres">Presión</button>
+      <button data-campo="vv">Viento</button>
+    </div>
+    <div class="controls" id="rangeBtns" style="margin-top:8px;">
+      <button data-horas="24" class="active">24h</button>
+      <button data-horas="48">48h</button>
+      <button data-horas="168">7d</button>
+    </div>
+    <div class="chart-box"><canvas id="chart"></canvas></div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <script>
+    // ==== CAMBIA ESTO por la URL donde despliegues tu API ====
+    const API = "http://localhost:8000";
+    // ej: const API = "https://meteo-soria.onrender.com";
+
+    let campo = "ta", horas = 24, chart;
+
+    const UNITS = { ta:"°C", hr:"%", pres:"hPa", vv:"m/s" };
+
+    // Linea vertical que sigue al cursor / dedo sobre el punto activo
+    const crosshair = {
+      id: "crosshair",
+      afterDraw(c) {
+        const act = c.tooltip?.getActiveElements?.() || [];
+        if (!act.length) return;
+        const x = act[0].element.x;
+        const { top, bottom } = c.chartArea;
+        const ctx = c.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(77,163,255,0.5)";
+        ctx.stroke();
+        ctx.restore();
+      },
+    };
+    Chart.register(crosshair);
+
+    async function loadLatest() {
+      try {
+        const r = await fetch(`${API}/api/latest`);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        const set = (id, val, u="") => document.getElementById(id).textContent =
+          (val ?? "--") + (val != null ? u : "");
+        document.getElementById("temp").textContent = d.ta ?? "--";
+        set("hr", d.hr, "%");
+        set("pres", d.pres, " hPa");
+        set("vv", d.vv, " m/s");
+        set("tamax", d.tamax, "°");
+        set("tamin", d.tamin, "°");
+        set("prec", d.prec, " mm");
+        if (d.fint) {
+          const f = new Date(d.fint);
+          document.getElementById("updated").textContent =
+            "Actualizado " + f.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
+        }
+      } catch (e) {
+        document.getElementById("err").textContent = "No pude cargar la última observación: " + e.message;
+      }
+    }
+
+    async function loadSeries() {
+      try {
+        document.getElementById("err").textContent = "";
+        const r = await fetch(`${API}/api/series?campo=${campo}&horas=${horas}`);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        const labels = d.puntos.map(p => new Date(p.t).toLocaleString("es-ES",
+          { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }));
+        const data = d.puntos.map(p => p.v);
+        renderChart(labels, data);
+      } catch (e) {
+        document.getElementById("err").textContent = "No pude cargar la serie: " + e.message;
+      }
+    }
+
+    function renderChart(labels, data) {
+      const ctx = document.getElementById("chart");
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: "line",
+        data: { labels, datasets: [{
+          data, borderColor: "#4da3ff", backgroundColor: "rgba(77,163,255,0.15)",
+          fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2,
+          pointHoverRadius: 5, pointHoverBackgroundColor: "#4da3ff",
+          pointHoverBorderColor: "#fff", pointHoverBorderWidth: 2,
+        }]},
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false, axis: "x" },
+          plugins: { legend: { display: false },
+            tooltip: {
+              enabled: true,
+              backgroundColor: "rgba(19,28,46,0.95)",
+              borderColor: "#4da3ff", borderWidth: 1,
+              padding: 10, displayColors: false,
+              titleColor: "#8aa0bd", bodyColor: "#e6edf7", bodyFont: { size: 15, weight: "600" },
+              callbacks: { label: c => c.parsed.y + " " + (UNITS[campo]||"") } } },
+          scales: {
+            x: { ticks: { color: "#8aa0bd", maxTicksLimit: 6, font:{size:10} }, grid:{color:"rgba(255,255,255,0.05)"} },
+            y: { ticks: { color: "#8aa0bd", font:{size:11} }, grid:{color:"rgba(255,255,255,0.05)"} },
+          },
+        },
+      });
+    }
+
+    document.getElementById("fieldBtns").addEventListener("click", e => {
+      if (e.target.tagName !== "BUTTON") return;
+      campo = e.target.dataset.campo;
+      [...e.currentTarget.children].forEach(b => b.classList.toggle("active", b === e.target));
+      loadSeries();
+    });
+    document.getElementById("rangeBtns").addEventListener("click", e => {
+      if (e.target.tagName !== "BUTTON") return;
+      horas = +e.target.dataset.horas;
+      [...e.currentTarget.children].forEach(b => b.classList.toggle("active", b === e.target));
+      loadSeries();
+    });
+
+    loadLatest();
+    loadSeries();
+  </script>
+</body>
+</html>
