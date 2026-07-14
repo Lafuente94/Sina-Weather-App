@@ -24,4 +24,4 @@ jobs:
         env:
           AEMET_API_KEY: ${{ secrets.AEMET_API_KEY }}
           DB_URL: ${{ secrets.DB_URL }}
-        run: python aemet2postgres.py
+        run: python src/aemet2postgres.py
