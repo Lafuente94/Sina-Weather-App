@@ -34,7 +34,7 @@ app = FastAPI(title="Meteo Soria API")
 # Para empezar dejamos "*"; luego conviene restringir al dominio real de tu web.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://Lafuente94.github.io"],
     allow_methods=["GET"],
     allow_headers=["*"],
 )
